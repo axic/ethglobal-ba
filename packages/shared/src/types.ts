@@ -31,6 +31,7 @@ export interface User {
   name: string;
   health: number;
   attackRating: number;
+  creds: number;
   isNpc: boolean;
   inventory: Inventory;
   creds: number;
