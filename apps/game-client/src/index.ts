@@ -99,8 +99,7 @@ function printHelp(): void {
   console.log("  say <message>       Speak to others in the room");
   console.log("  move <direction>    Move north/south/east/west/up/down");
   console.log("  attack <name>       Attack a Normie in the room");
-  console.log("  status              Show your current stats");
-  console.log("  inventory           View your equipment and items");
+  console.log("  status              Show your stats and inventory");
   console.log("  name <new name>     Change your display name");
   console.log("  help                Show this help text");
   console.log("  quit                Exit the client");
@@ -156,7 +155,7 @@ function interpretInput(line: string, ws: WebSocket): void {
   }
 
   if (lower === "inventory") {
-    sendCommand(ws, { type: "inventory" });
+    sendCommand(ws, { type: "status" });
     return;
   }
 
