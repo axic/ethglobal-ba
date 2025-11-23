@@ -15,12 +15,17 @@ export interface Room {
   createdAt: string;
 }
 
-export interface PlayerState {
+export interface User {
   id: string;
   name: string;
+  health: number;
+  attackRating: number;
+  isNpc: boolean;
+}
+
+export interface PlayerState extends User {
   roomId: string;
   lastActiveAt: string;
-  isBot: boolean;
 }
 
 // Client → server
