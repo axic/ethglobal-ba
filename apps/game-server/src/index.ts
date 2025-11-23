@@ -242,9 +242,11 @@ wss.on("connection", (socket: WebSocket) => {
   const player: PlayerState = {
     id: playerId,
     name: `Wanderer-${playerId.slice(2, 6)}`,
+    health: 100,
+    attackRating: 0,
+    isNpc: false,
     roomId: hubRoom.id,
-    lastActiveAt: nowIso(),
-    isBot: false
+    lastActiveAt: nowIso()
   };
 
   players.set(playerId, player);
