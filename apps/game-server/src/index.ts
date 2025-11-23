@@ -40,14 +40,60 @@ const BROKEN_LEDGER: VendorStockItem = {
   description: "Ledger broken in half with sharp edges. Still holds the seed phrase."
 };
 
-const ITEM_DEFINITIONS: Record<string, { type: VendorStockItem["type"]; attackRating?: number }> = {
+const COFFEE: VendorStockItem = {
+  name: "Coffee",
+  type: "item",
+  quantity: "unlimited",
+  cost: 2,
+  healAmount: 10,
+  description: "A hot brew that restores 10 health when sipped."
+};
+
+const MONSTER: VendorStockItem = {
+  name: "Monster",
+  type: "item",
+  quantity: "unlimited",
+  cost: 1,
+  healAmount: 4,
+  description: "Sugary fizz that restores 4 health."
+};
+
+const MATE: VendorStockItem = {
+  name: "Mate",
+  type: "item",
+  quantity: "unlimited",
+  cost: 2,
+  healAmount: 10,
+  description: "Herbal energy that restores 10 health."
+};
+
+interface ItemDefinition {
+  type: VendorStockItem["type"];
+  attackRating?: number;
+  healAmount?: number;
+}
+
+const ITEM_DEFINITIONS: Record<string, ItemDefinition> = {
   [BROKEN_LEDGER.name.toLowerCase()]: {
     type: BROKEN_LEDGER.type,
     attackRating: BROKEN_LEDGER.attackRating
+  },
+  [COFFEE.name.toLowerCase()]: {
+    type: COFFEE.type,
+    healAmount: COFFEE.healAmount
+  },
+  [MONSTER.name.toLowerCase()]: {
+    type: MONSTER.type,
+    healAmount: MONSTER.healAmount
+  },
+  [MATE.name.toLowerCase()]: {
+    type: MATE.type,
+    healAmount: MATE.healAmount
   }
 };
 
 const FIST_ATTACK_RATING = 10;
+const PLAYER_MAX_HEALTH = 100;
 
 function createEmptyInventory(): Inventory {
   return {
@@ -141,7 +187,7 @@ function spawnVendorChet(): void {
     attackRating: BROKEN_LEDGER.attackRating ?? 20,
     isNpc: true,
     npcClass: "vendor",
-    vendorStock: [BROKEN_LEDGER],
+    vendorStock: [BROKEN_LEDGER, COFFEE, MONSTER, MATE],
     inventory: vendorInventory,
     roomId: hubRoom.id,
     lastActiveAt: nowIso()
@@ -193,9 +239,10 @@ function formatVendorStock(stock: VendorStockItem[]): string {
   const lines = stock.map((item) => {
     const qty = item.quantity === "unlimited" ? "unlimited" : `x${item.quantity}`;
     const attack = typeof item.attackRating === "number" ? `, atk ${item.attackRating}` : "";
+    const heal = typeof item.healAmount === "number" ? `, heals ${item.healAmount}` : "";
     const cost = typeof item.cost === "number" ? `${item.cost} creds` : "free";
     const description = item.description ? ` — ${item.description}` : "";
-    return `- ${item.name} (${item.type}, ${qty}${attack}) for ${cost}${description}`;
+    return `- ${item.name} (${item.type}, ${qty}${attack}${heal}) for ${cost}${description}`;
   });
 
   return ["Chet shows you his wares:", ...lines, "(Try: talk chet buy <item name> or talk chet leave)"]
@@ -557,6 +604,23 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
         type: "system",
         ts: nowIso(),
         message: `You equip ${foundItem} as your armor.`
+      });
+      return;
+    }
+
+    if (definition.type === "item") {
+      const healAmount = Math.max(0, definition.healAmount ?? 0);
+      const previousHealth = player.health;
+      player.health = Math.min(PLAYER_MAX_HEALTH, player.health + healAmount);
+      const healedFor = player.health - previousHealth;
+
+      sendEvent(playerId, {
+        type: "system",
+        ts: nowIso(),
+        message:
+          healedFor > 0
+            ? `You consume ${foundItem} and recover ${healedFor} health. (${player.health} hp now)`
+            : `You consume ${foundItem} but feel no different. (${player.health} hp)`
       });
       return;
     }

@@ -22,6 +22,7 @@ export interface VendorStockItem {
   type: "weapon" | "armor" | "item";
   quantity: number | "unlimited";
   attackRating?: number;
+  healAmount?: number;
   cost?: number;
   description?: string;
 }
