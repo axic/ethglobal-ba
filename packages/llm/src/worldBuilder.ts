@@ -23,7 +23,7 @@ const RoomSchema = z.object({
 });
 
 const WorldBuilderResponseSchema = z.object({
-  newRooms: z.array(RoomSchema)
+  rooms: z.array(RoomSchema)
 });
 
 export async function generateRoomsForExit(
@@ -48,7 +48,7 @@ Current room:
 - regionId: ${ctx.currentRoom.regionId}
 - isHub: ${ctx.currentRoom.isHub}
 - exits: ${ctx.currentRoom.exits
-    .map((e) => `${e.direction} -> ${e.targetRoomId ?? "unknown"}`)
+    .map((e) => `${e.direction} -> ${e.targetRoomId}`)
     .join(", ")}
 
 The player is moving: ${ctx.direction}
@@ -67,11 +67,12 @@ Return JSON for 1-2 new rooms to place beyond that direction.
   });
 
   const raw = completion.choices[0].message.content ?? "{}";
+  console.log(raw);
 
   const parsed = WorldBuilderResponseSchema.parse(JSON.parse(raw));
 
   const result: WorldBuilderResponse = {
-    newRooms: parsed.newRooms.map((r: any): WorldBuilderRoomOutput => ({
+    newRooms: parsed.rooms.map((r: any): WorldBuilderRoomOutput => ({
       name: r.name,
       description: r.description,
       isHub: r.isHub ?? false,
