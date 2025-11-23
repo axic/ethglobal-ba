@@ -34,7 +34,6 @@ export interface User {
   creds: number;
   isNpc: boolean;
   inventory: Inventory;
-  creds: number;
   npcClass?: NpcClass;
   vendorStock?: VendorStockItem[];
   description?: string;

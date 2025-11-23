@@ -84,10 +84,9 @@ function formatInventory(inventory: Inventory): string {
 function formatStatus(player: PlayerState): string {
   return [
     `Name: ${player.name}`,
+    `Creds: ${player.creds}`,
     `Health: ${player.health}`,
-    `Creds: ${player.creds}`,
     `Attack rating: ${player.attackRating}`,
-    `Creds: ${player.creds}`,
     `Weapon: ${describeWeaponSlot(player.inventory)}`,
     `Armor: ${describeArmorSlot(player.inventory)}`
   ].join("\n");
@@ -128,12 +127,12 @@ function spawnVendorChet(): void {
     name: "Chet",
     description:
       "A vendor hunched over a stack of cracked ledgers, ready to cut you up if you are not nice.",
+    creds: 0,
     health: 100,
     attackRating: BROKEN_LEDGER.attackRating ?? 20,
     isNpc: true,
     npcClass: "vendor",
     vendorStock: [BROKEN_LEDGER],
-    creds: 0,
     inventory: vendorInventory,
     roomId: hubRoom.id,
     lastActiveAt: nowIso()
@@ -334,11 +333,11 @@ async function maybeSpawnNormie(room: Room): Promise<void> {
       id: `npc-${randomUUID()}`,
       name: profile.name,
       description: profile.description,
+      creds,
       health,
       attackRating: NORMIE_ATTACK_RATING,
       npcClass: "normie",
       isNpc: true,
-      creds,
       inventory: createEmptyInventory(),
       roomId: room.id,
       lastActiveAt: nowIso()
