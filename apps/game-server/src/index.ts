@@ -40,9 +40,18 @@ const BROKEN_LEDGER: VendorStockItem = {
   description: "Ledger broken in half with sharp edges. Still holds the seed phrase."
 };
 
+const ITEM_DEFINITIONS: Record<string, { type: VendorStockItem["type"]; attackRating?: number }> = {
+  [BROKEN_LEDGER.name.toLowerCase()]: {
+    type: BROKEN_LEDGER.type,
+    attackRating: BROKEN_LEDGER.attackRating
+  }
+};
+
+const FIST_ATTACK_RATING = 10;
+
 function createEmptyInventory(): Inventory {
   return {
-    weapon: null,
+    weapon: "fist",
     armor: null,
     items: Array(20).fill(null)
   };
@@ -201,6 +210,19 @@ function addItemToInventory(inventory: Inventory, itemName: string): boolean {
   return true;
 }
 
+function removeItemFromInventory(inventory: Inventory, itemName: string): string | null {
+  const index = inventory.items.findIndex((item) => item?.toLowerCase() === itemName.toLowerCase());
+  if (index === -1) return null;
+
+  const found = inventory.items[index];
+  inventory.items[index] = null;
+  return found;
+}
+
+function identifyItem(itemName: string): { type: VendorStockItem["type"]; attackRating?: number } | null {
+  return ITEM_DEFINITIONS[itemName.toLowerCase()] ?? null;
+}
+
 function handleTalk(
   player: PlayerState,
   room: Room,
@@ -274,28 +296,22 @@ function handleTalk(
     player.creds -= cost;
     vendor.creds += cost;
 
-    if (desired.type === "weapon") {
-      player.inventory.weapon = desired.name;
-      if (typeof desired.attackRating === "number") {
-        player.attackRating = desired.attackRating;
-      }
-    } else if (desired.type === "armor") {
-      player.inventory.armor = desired.name;
-    } else {
-      if (!addItemToInventory(player.inventory, desired.name)) {
-        sendEvent(player.id, {
-          type: "error",
-          ts: nowIso(),
-          message: "Your pack is full. Drop something before buying that.",
-        });
-        return;
-      }
+    if (!addItemToInventory(player.inventory, desired.name)) {
+      player.creds += cost;
+      vendor.creds -= cost;
+
+      sendEvent(player.id, {
+        type: "error",
+        ts: nowIso(),
+        message: "Your pack is full. Drop something before buying that.",
+      });
+      return;
     }
 
     sendEvent(player.id, {
       type: "system",
       ts: nowIso(),
-      message: `You buy ${desired.name} from Chet for ${cost} creds.`,
+      message: `You buy ${desired.name} from Chet for ${cost} creds and stash it in your pack.`,
     });
     return;
   }
@@ -462,6 +478,164 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
       message: formatStatusWithInventory(player)
     });
     return;
+  }
+
+  if (command.type === "equip") {
+    const itemName = command.item.trim();
+
+    if (!itemName) {
+      sendEvent(playerId, {
+        type: "error",
+        ts: nowIso(),
+        message: "Equip what? Try: equip <item name>"
+      });
+      return;
+    }
+
+    const foundItem = removeItemFromInventory(player.inventory, itemName);
+    if (!foundItem) {
+      sendEvent(playerId, {
+        type: "error",
+        ts: nowIso(),
+        message: `${itemName} isn't in your inventory.`
+      });
+      return;
+    }
+
+    const definition = identifyItem(foundItem);
+    if (!definition) {
+      addItemToInventory(player.inventory, foundItem);
+      sendEvent(playerId, {
+        type: "error",
+        ts: nowIso(),
+        message: `You don't know how to equip ${foundItem}.`
+      });
+      return;
+    }
+
+    if (definition.type === "weapon") {
+      const currentWeapon = player.inventory.weapon;
+      if (currentWeapon && currentWeapon.toLowerCase() !== "fist") {
+        if (!addItemToInventory(player.inventory, currentWeapon)) {
+          addItemToInventory(player.inventory, foundItem);
+          sendEvent(playerId, {
+            type: "error",
+            ts: nowIso(),
+            message: "No space to stow your current weapon."
+          });
+          return;
+        }
+      }
+
+      player.inventory.weapon = foundItem;
+      player.attackRating = definition.attackRating ?? FIST_ATTACK_RATING;
+
+      sendEvent(playerId, {
+        type: "system",
+        ts: nowIso(),
+        message: `You equip ${foundItem} as your weapon.`
+      });
+      return;
+    }
+
+    if (definition.type === "armor") {
+      const currentArmor = player.inventory.armor;
+      if (currentArmor) {
+        if (!addItemToInventory(player.inventory, currentArmor)) {
+          addItemToInventory(player.inventory, foundItem);
+          sendEvent(playerId, {
+            type: "error",
+            ts: nowIso(),
+            message: "No space to stow your current armor."
+          });
+          return;
+        }
+      }
+
+      player.inventory.armor = foundItem;
+      sendEvent(playerId, {
+        type: "system",
+        ts: nowIso(),
+        message: `You equip ${foundItem} as your armor.`
+      });
+      return;
+    }
+
+    addItemToInventory(player.inventory, foundItem);
+    sendEvent(playerId, {
+      type: "error",
+      ts: nowIso(),
+      message: `${foundItem} cannot be equipped.`
+    });
+    return;
+  }
+
+  if (command.type === "unequip") {
+    const slot = command.slot ?? "weapon";
+
+    if (slot === "weapon") {
+      const equipped = player.inventory.weapon;
+
+      if (!equipped || equipped.toLowerCase() === "fist") {
+        player.inventory.weapon = "fist";
+        player.attackRating = FIST_ATTACK_RATING;
+        sendEvent(playerId, {
+          type: "system",
+          ts: nowIso(),
+          message: "You ball up your fists, ready to swing."
+        });
+        return;
+      }
+
+      if (!addItemToInventory(player.inventory, equipped)) {
+        sendEvent(playerId, {
+          type: "error",
+          ts: nowIso(),
+          message: "No space in your pack to unequip that weapon."
+        });
+        return;
+      }
+
+      player.inventory.weapon = "fist";
+      player.attackRating = FIST_ATTACK_RATING;
+
+      sendEvent(playerId, {
+        type: "system",
+        ts: nowIso(),
+        message: `You stow ${equipped} and rely on your fists.`
+      });
+      return;
+    }
+
+    if (slot === "armor") {
+      const equipped = player.inventory.armor;
+
+      if (!equipped) {
+        sendEvent(playerId, {
+          type: "system",
+          ts: nowIso(),
+          message: "You aren't wearing any armor."
+        });
+        return;
+      }
+
+      if (!addItemToInventory(player.inventory, equipped)) {
+        sendEvent(playerId, {
+          type: "error",
+          ts: nowIso(),
+          message: "No space in your pack to unequip that armor."
+        });
+        return;
+      }
+
+      player.inventory.armor = null;
+      sendEvent(playerId, {
+        type: "system",
+        ts: nowIso(),
+        message: `You remove ${equipped} and pack it away.`
+      });
+      return;
+    }
   }
 
   if (command.type === "look") {
@@ -644,6 +818,15 @@ function parseClientCommand(raw: string): ClientCommand | null {
     }
     if (parsed.type === "inventory") {
       return { type: "status" };
+    }
+    if (parsed.type === "equip" && typeof parsed.item === "string") {
+      return { type: "equip", item: parsed.item };
+    }
+    if (
+      parsed.type === "unequip" &&
+      (parsed.slot === undefined || parsed.slot === "weapon" || parsed.slot === "armor")
+    ) {
+      return { type: "unequip", slot: parsed.slot };
     }
     if (parsed.type === "talk" && typeof parsed.target === "string") {
       const action =
