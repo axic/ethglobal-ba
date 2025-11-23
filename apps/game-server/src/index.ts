@@ -76,6 +76,7 @@ function formatStatus(player: PlayerState): string {
     `Name: ${player.name}`,
     `Health: ${player.health}`,
     `Attack rating: ${player.attackRating}`,
+    `Creds: ${player.creds}`,
     `Weapon: ${describeWeaponSlot(player.inventory)}`,
     `Armor: ${describeArmorSlot(player.inventory)}`
   ].join("\n");
@@ -153,6 +154,7 @@ async function maybeSpawnNormie(room: Room): Promise<void> {
   const health = Math.floor(
     Math.random() * (NORMIE_MAX_HEALTH - NORMIE_MIN_HEALTH + 1) + NORMIE_MIN_HEALTH
   );
+  const creds = Math.floor(Math.random() * 51);
 
   try {
     const profile = await generateNormieProfile(health);
@@ -162,6 +164,7 @@ async function maybeSpawnNormie(room: Room): Promise<void> {
       description: profile.description,
       health,
       attackRating: NORMIE_ATTACK_RATING,
+      creds,
       isNpc: true,
       inventory: createEmptyInventory(),
       roomId: room.id,
@@ -208,12 +211,21 @@ function handleAttack(player: PlayerState, room: Room, target: string): void {
   });
 
   if (npc.health <= 0) {
+    const loot = npc.creds ?? 0;
     npcs.delete(npc.id);
     broadcastToRoom(room.id, {
       type: "system",
       ts: nowIso(),
       message: `${npc.name} is defeated and slinks away.`
     });
+    if (loot > 0) {
+      player.creds += loot;
+      sendEvent(player.id, {
+        type: "system",
+        ts: nowIso(),
+        message: `You collect ${loot} creds from ${npc.name}. You now have ${player.creds}.`
+      });
+    }
     return;
   }
 
@@ -444,6 +456,7 @@ wss.on("connection", (socket: WebSocket) => {
     name: `Wanderer-${playerId.slice(2, 6)}`,
     health: 100,
     attackRating: 10,
+    creds: 0,
     isNpc: false,
     inventory: createEmptyInventory(),
     roomId: hubRoom.id,
