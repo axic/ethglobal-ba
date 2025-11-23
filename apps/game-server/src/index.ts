@@ -10,8 +10,14 @@ import {
   WorldBuilderRoomInputContext
 } from "@ethglobal-ba/shared/src/types";
 import { generateRoomsForExit } from "@ethglobal-ba/llm/src/worldBuilder";
+import { generateNormieProfile } from "@ethglobal-ba/llm/src/normieProfile";
 
 const PORT = Number(process.env.GAME_SERVER_PORT ?? 4000);
+const NORMIE_ATTACK_RATING = 10;
+const NORMIE_MIN_HEALTH = 15;
+const NORMIE_MAX_HEALTH = 100;
+const NORMIE_SPAWN_CHANCE = 0.35;
+const MAX_NORMIES_PER_ROOM = 3;
 
 interface ConnectionContext {
   socket: WebSocket;
@@ -21,6 +27,7 @@ interface ConnectionContext {
 const rooms = new Map<string, Room>();
 const players = new Map<string, PlayerState>();
 const connections = new Map<string, ConnectionContext>();
+const npcs = new Map<string, PlayerState>();
 
 function createInitialWorld(): Room {
   const id = "hub-1";
@@ -62,14 +69,113 @@ function broadcastToRoom(roomId: string, event: ServerEvent) {
   }
 }
 
-function listOtherPlayersInRoom(roomId: string, excludePlayerId: string): PlayerState[] {
+function listNpcsInRoom(roomId: string): PlayerState[] {
+  const result: PlayerState[] = [];
+  for (const npc of npcs.values()) {
+    if (npc.roomId === roomId) {
+      result.push(npc);
+    }
+  }
+  return result;
+}
+
+function listOtherActorsInRoom(roomId: string, excludePlayerId: string): PlayerState[] {
   const result: PlayerState[] = [];
   for (const player of players.values()) {
     if (player.roomId === roomId && player.id !== excludePlayerId) {
       result.push(player);
     }
   }
-  return result;
+  return result.concat(listNpcsInRoom(roomId));
+}
+
+async function maybeSpawnNormie(room: Room): Promise<void> {
+  const existingNormies = listNpcsInRoom(room.id);
+  if (existingNormies.length >= MAX_NORMIES_PER_ROOM) return;
+  if (Math.random() > NORMIE_SPAWN_CHANCE) return;
+
+  const health = Math.floor(
+    Math.random() * (NORMIE_MAX_HEALTH - NORMIE_MIN_HEALTH + 1) + NORMIE_MIN_HEALTH
+  );
+
+  try {
+    const profile = await generateNormieProfile(health);
+    const npc: PlayerState = {
+      id: `npc-${randomUUID()}`,
+      name: profile.name,
+      description: profile.description,
+      health,
+      attackRating: NORMIE_ATTACK_RATING,
+      isNpc: true,
+      roomId: room.id,
+      lastActiveAt: nowIso()
+    };
+
+    npcs.set(npc.id, npc);
+    broadcastToRoom(room.id, {
+      type: "system",
+      ts: nowIso(),
+      message: `A Normie named ${npc.name} appears. ${npc.description}`
+    });
+  } catch (err) {
+    console.error("Failed to generate Normie profile:", err);
+  }
+}
+
+function findNormieInRoom(roomId: string, name: string): PlayerState | undefined {
+  const lower = name.toLowerCase();
+  return listNpcsInRoom(roomId).find((npc) => npc.name.toLowerCase() === lower);
+}
+
+function handleAttack(player: PlayerState, room: Room, target: string): void {
+  const npc = findNormieInRoom(room.id, target);
+
+  if (!npc) {
+    sendEvent(player.id, {
+      type: "error",
+      ts: nowIso(),
+      message: `There is no Normie named ${target} here.`
+    });
+    return;
+  }
+
+  const damage = Math.max(0, player.attackRating);
+  npc.health = Math.max(0, npc.health - damage);
+  npc.lastActiveAt = nowIso();
+
+  broadcastToRoom(room.id, {
+    type: "system",
+    ts: nowIso(),
+    message: `${player.name} attacks ${npc.name} for ${damage} damage. (${npc.health} hp left)`
+  });
+
+  if (npc.health <= 0) {
+    npcs.delete(npc.id);
+    broadcastToRoom(room.id, {
+      type: "system",
+      ts: nowIso(),
+      message: `${npc.name} is defeated and slinks away.`
+    });
+    return;
+  }
+
+  const retaliation = Math.max(0, npc.attackRating);
+  player.health = Math.max(0, player.health - retaliation);
+  player.lastActiveAt = nowIso();
+
+  broadcastToRoom(room.id, {
+    type: "system",
+    ts: nowIso(),
+    message: `${npc.name} strikes back for ${retaliation} damage! ${player.name} has ${player.health} hp.`
+  });
+
+  if (player.health <= 0) {
+    sendEvent(player.id, {
+      type: "system",
+      ts: nowIso(),
+      message: "You are overwhelmed and need a moment to recover."
+    });
+  }
 }
 
 async function handleCommand(playerId: string, command: ClientCommand): Promise<void> {
@@ -95,7 +201,7 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
       type: "roomDescription",
       ts: nowIso(),
       room,
-      otherPlayers: listOtherPlayersInRoom(room.id, playerId)
+      otherPlayers: listOtherActorsInRoom(room.id, playerId)
     });
     return;
   }
@@ -113,6 +219,21 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
       message: msg
     };
     broadcastToRoom(room.id, chatEvent);
+    return;
+  }
+
+  if (command.type === "attack") {
+    const target = command.target.trim();
+    if (!target) {
+      sendEvent(playerId, {
+        type: "error",
+        ts: nowIso(),
+        message: "Attack who? Try: attack <name>"
+      });
+      return;
+    }
+
+    handleAttack(player, room, target);
     return;
   }
 
@@ -191,6 +312,8 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
       return;
     }
 
+    await maybeSpawnNormie(targetRoom);
+
     const oldRoomId = player.roomId;
     player.roomId = targetRoom.id;
 
@@ -198,7 +321,7 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
       type: "roomDescription",
       ts: nowIso(),
       room: targetRoom,
-      otherPlayers: listOtherPlayersInRoom(targetRoom.id, playerId)
+      otherPlayers: listOtherActorsInRoom(targetRoom.id, playerId)
     });
 
     broadcastToRoom(oldRoomId, {
@@ -229,6 +352,9 @@ function parseClientCommand(raw: string): ClientCommand | null {
     if (parsed.type === "setName" && typeof parsed.name === "string") {
       return { type: "setName", name: parsed.name };
     }
+    if (parsed.type === "attack" && typeof parsed.target === "string") {
+      return { type: "attack", target: parsed.target };
+    }
   } catch {
     return null;
   }
@@ -243,7 +369,7 @@ wss.on("connection", (socket: WebSocket) => {
     id: playerId,
     name: `Wanderer-${playerId.slice(2, 6)}`,
     health: 100,
-    attackRating: 0,
+    attackRating: 10,
     isNpc: false,
     roomId: hubRoom.id,
     lastActiveAt: nowIso()
