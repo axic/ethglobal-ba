@@ -185,6 +185,20 @@ function findNormieInRoom(roomId: string, name: string): PlayerState | undefined
 }
 
 function handleAttack(player: PlayerState, room: Room, target: string): void {
+  const lowerTarget = target.toLowerCase();
+  const otherPlayer = listOtherActorsInRoom(room.id, player.id).find(
+    (actor) => !actor.isNpc && actor.name.toLowerCase() === lowerTarget
+  );
+
+  if (otherPlayer) {
+    sendEvent(player.id, {
+      type: "system",
+      ts: nowIso(),
+      message: `You cannot attack the friendly ${otherPlayer.name}.`
+    });
+    return;
+  }
+
   const npc = findNormieInRoom(room.id, target);
 
   if (!npc) {
