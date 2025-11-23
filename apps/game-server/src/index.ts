@@ -8,7 +8,8 @@ import {
   Room,
   ExitRef,
   WorldBuilderRoomInputContext,
-  Inventory
+  Inventory,
+  VendorStockItem
 } from "@ethglobal-ba/shared/src/types";
 import { generateRoomsForExit } from "@ethglobal-ba/llm/src/worldBuilder";
 import { generateNormieProfile } from "@ethglobal-ba/llm/src/normieProfile";
@@ -29,6 +30,15 @@ const rooms = new Map<string, Room>();
 const players = new Map<string, PlayerState>();
 const connections = new Map<string, ConnectionContext>();
 const npcs = new Map<string, PlayerState>();
+
+const BROKEN_LEDGER: VendorStockItem = {
+  name: "Broken Ledger",
+  type: "weapon",
+  quantity: "unlimited",
+  attackRating: 20,
+  cost: 20,
+  description: "Ledger broken in half with sharp edges. Still holds the seed phrase."
+};
 
 function createEmptyInventory(): Inventory {
   return {
@@ -75,6 +85,7 @@ function formatStatus(player: PlayerState): string {
   return [
     `Name: ${player.name}`,
     `Health: ${player.health}`,
+    `Creds: ${player.creds}`,
     `Attack rating: ${player.attackRating}`,
     `Creds: ${player.creds}`,
     `Weapon: ${describeWeaponSlot(player.inventory)}`,
@@ -108,6 +119,31 @@ function createInitialWorld(): Room {
 
 const hubRoom = createInitialWorld();
 
+function spawnVendorChet(): void {
+  const vendorInventory = createEmptyInventory();
+  vendorInventory.weapon = BROKEN_LEDGER.name;
+
+  const vendor: PlayerState = {
+    id: "npc-vendor-chet",
+    name: "Chet",
+    description:
+      "A vendor hunched over a stack of cracked ledgers, ready to cut you up if you are not nice.",
+    health: 100,
+    attackRating: BROKEN_LEDGER.attackRating ?? 20,
+    isNpc: true,
+    npcClass: "vendor",
+    vendorStock: [BROKEN_LEDGER],
+    creds: 0,
+    inventory: vendorInventory,
+    roomId: hubRoom.id,
+    lastActiveAt: nowIso()
+  };
+
+  npcs.set(vendor.id, vendor);
+}
+
+spawnVendorChet();
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -134,6 +170,142 @@ function listNpcsInRoom(roomId: string): PlayerState[] {
     }
   }
   return result;
+}
+
+function findVendorInRoom(roomId: string, name: string): PlayerState | undefined {
+  const lower = name.toLowerCase();
+  return listNpcsInRoom(roomId).find(
+    (npc) => npc.npcClass === "vendor" && npc.name.toLowerCase() === lower
+  );
+}
+
+function formatVendorStock(stock: VendorStockItem[]): string {
+  if (stock.length === 0) return "(Chet shrugs. Nothing for sale right now.)";
+
+  const lines = stock.map((item) => {
+    const qty = item.quantity === "unlimited" ? "unlimited" : `x${item.quantity}`;
+    const attack = typeof item.attackRating === "number" ? `, atk ${item.attackRating}` : "";
+    const cost = typeof item.cost === "number" ? `${item.cost} creds` : "free";
+    const description = item.description ? ` — ${item.description}` : "";
+    return `- ${item.name} (${item.type}, ${qty}${attack}) for ${cost}${description}`;
+  });
+
+  return ["Chet shows you his wares:", ...lines, "(Try: talk chet buy <item name> or talk chet leave)"]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function addItemToInventory(inventory: Inventory, itemName: string): boolean {
+  const slot = inventory.items.findIndex((item) => item === null);
+  if (slot === -1) return false;
+  inventory.items[slot] = itemName;
+  return true;
+}
+
+function handleTalk(
+  player: PlayerState,
+  room: Room,
+  target: string,
+  action: ClientCommand["action"],
+  itemName?: string
+): void {
+  const vendor = findVendorInRoom(room.id, target);
+
+  if (!vendor || vendor.name.toLowerCase() !== "chet") {
+    sendEvent(player.id, {
+      type: "error",
+      ts: nowIso(),
+      message: `You don't see ${target} here to talk to. Only Chet seems interested in conversation.`,
+    });
+    return;
+  }
+
+  const stock = vendor.vendorStock ?? [];
+
+  if (!action || action === "list") {
+    sendEvent(player.id, {
+      type: "system",
+      ts: nowIso(),
+      message: formatVendorStock(stock),
+    });
+    return;
+  }
+
+  if (action === "leave") {
+    sendEvent(player.id, {
+      type: "system",
+      ts: nowIso(),
+      message: "You nod to Chet and step away.",
+    });
+    return;
+  }
+
+  if (action === "buy") {
+    if (!itemName) {
+      sendEvent(player.id, {
+        type: "error",
+        ts: nowIso(),
+        message: "Specify what to buy. Example: talk chet buy Broken Ledger",
+      });
+      return;
+    }
+
+    const desired = stock.find((item) => item.name.toLowerCase() === itemName.toLowerCase());
+
+    if (!desired) {
+      sendEvent(player.id, {
+        type: "error",
+        ts: nowIso(),
+        message: `Chet doesn't carry ${itemName}. Try talk chet list.`,
+      });
+      return;
+    }
+
+    const cost = desired.cost ?? 0;
+
+    if (player.creds < cost) {
+      sendEvent(player.id, {
+        type: "error",
+        ts: nowIso(),
+        message: `You need ${cost} creds to buy ${desired.name}, but you only have ${player.creds}.`,
+      });
+      return;
+    }
+
+    player.creds -= cost;
+    vendor.creds += cost;
+
+    if (desired.type === "weapon") {
+      player.inventory.weapon = desired.name;
+      if (typeof desired.attackRating === "number") {
+        player.attackRating = desired.attackRating;
+      }
+    } else if (desired.type === "armor") {
+      player.inventory.armor = desired.name;
+    } else {
+      if (!addItemToInventory(player.inventory, desired.name)) {
+        sendEvent(player.id, {
+          type: "error",
+          ts: nowIso(),
+          message: "Your pack is full. Drop something before buying that.",
+        });
+        return;
+      }
+    }
+
+    sendEvent(player.id, {
+      type: "system",
+      ts: nowIso(),
+      message: `You buy ${desired.name} from Chet for ${cost} creds.`,
+    });
+    return;
+  }
+
+  sendEvent(player.id, {
+    type: "error",
+    ts: nowIso(),
+    message: "Chet tilts his head. Try list, buy, or leave.",
+  });
 }
 
 function listOtherActorsInRoom(roomId: string, excludePlayerId: string): PlayerState[] {
@@ -164,8 +336,9 @@ async function maybeSpawnNormie(room: Room): Promise<void> {
       description: profile.description,
       health,
       attackRating: NORMIE_ATTACK_RATING,
-      creds,
+      npcClass: "normie",
       isNpc: true,
+      creds,
       inventory: createEmptyInventory(),
       roomId: room.id,
       lastActiveAt: nowIso()
@@ -184,7 +357,9 @@ async function maybeSpawnNormie(room: Room): Promise<void> {
 
 function findNormieInRoom(roomId: string, name: string): PlayerState | undefined {
   const lower = name.toLowerCase();
-  return listNpcsInRoom(roomId).find((npc) => npc.name.toLowerCase() === lower);
+  return listNpcsInRoom(roomId).find(
+    (npc) => npc.npcClass === "normie" && npc.name.toLowerCase() === lower
+  );
 }
 
 function handleAttack(player: PlayerState, room: Room, target: string): void {
@@ -331,6 +506,22 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
     return;
   }
 
+  if (command.type === "talk") {
+    const target = command.target.trim();
+
+    if (!target) {
+      sendEvent(playerId, {
+        type: "error",
+        ts: nowIso(),
+        message: "Talk to whom? Try: talk chet",
+      });
+      return;
+    }
+
+    handleTalk(player, room, target, command.action, command.item);
+    return;
+  }
+
   if (command.type === "move") {
     const direction = command.direction;
     let exit = room.exits.find((e) => e.direction === direction);
@@ -454,6 +645,18 @@ function parseClientCommand(raw: string): ClientCommand | null {
     }
     if (parsed.type === "inventory") {
       return { type: "status" };
+    }
+    if (parsed.type === "talk" && typeof parsed.target === "string") {
+      const action =
+        parsed.action === "list" || parsed.action === "buy" || parsed.action === "leave"
+          ? parsed.action
+          : undefined;
+      return {
+        type: "talk",
+        target: parsed.target,
+        action,
+        item: typeof parsed.item === "string" ? parsed.item : undefined,
+      };
     }
   } catch {
     return null;
