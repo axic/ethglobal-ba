@@ -9,6 +9,8 @@
   "scripts": {
     "dev:game": "npm --workspace apps/game-server run dev",
     "build:game": "npm --workspace apps/game-server run build",
+    "dev:client": "npm --workspace apps/game-client run dev",
+    "build:client": "npm --workspace apps/game-client run build",
     "lint": "eslint ."
   },
   "devDependencies": {
