@@ -34,6 +34,32 @@ function formatExits(exits: Direction[]): string {
   return exits.join(", ");
 }
 
+function describeVendorStock(stock: PlayerState["vendorStock"]): string | null {
+  if (!stock || stock.length === 0) return null;
+
+  const items = stock.map((item) => {
+    const qty = item.quantity === "unlimited" ? "unlimited" : `x${item.quantity}`;
+    const attack = item.attackRating ? `, atk ${item.attackRating}` : "";
+    const cost = item.cost !== undefined ? `, cost ${item.cost} creds` : "";
+    const details = item.description ? ` - ${item.description}` : "";
+    return `${item.name} [${qty}${attack}${cost}]${details}`;
+  });
+
+  return items.join("; ");
+}
+
+function describeNpc(npc: PlayerState): string {
+  const desc = npc.description ? ` - ${npc.description}` : "";
+
+  if (npc.npcClass === "vendor") {
+    const stock = describeVendorStock(npc.vendorStock);
+    const stockInfo = stock ? ` Stock: ${stock}` : "";
+    return `${npc.name} (Vendor)${desc}${stockInfo}`;
+  }
+
+  return `${npc.name} (Normie, HP ${npc.health})${desc ? `: ${desc}` : ""}`;
+}
+
 function renderRoom(event: WelcomeEvent | RoomDescriptionEvent): void {
   state.room = event.room;
   const otherPlayers = "otherPlayers" in event ? event.otherPlayers : [];
@@ -42,15 +68,7 @@ function renderRoom(event: WelcomeEvent | RoomDescriptionEvent): void {
   console.log(event.room.description);
 
   if (otherPlayers && otherPlayers.length > 0) {
-    const names = otherPlayers
-      .map((p) => {
-        if (p.isNpc) {
-          const desc = p.description ? ` - ${p.description}` : "";
-          return `${p.name} (Normie, HP ${p.health})${desc ? `: ${desc}` : ""}`;
-        }
-        return p.name;
-      })
-      .join("; ");
+    const names = otherPlayers.map((p) => (p.isNpc ? describeNpc(p) : p.name)).join("; ");
     console.log("You see: %s", names);
   }
 
@@ -99,6 +117,7 @@ function printHelp(): void {
   console.log("  say <message>       Speak to others in the room");
   console.log("  move <direction>    Move north/south/east/west/up/down");
   console.log("  attack <name>       Attack a Normie in the room");
+  console.log("  talk <name> [...]   Talk to an NPC: list, buy <item>, or leave");
   console.log("  status              Show your stats and inventory");
   console.log("  name <new name>     Change your display name");
   console.log("  help                Show this help text");
@@ -165,6 +184,36 @@ function interpretInput(line: string, ws: WebSocket): void {
       return;
     }
     sendCommand(ws, { type: "attack", target: arg });
+    return;
+  }
+
+  if (lower === "talk") {
+    if (rest.length === 0) {
+      console.log("Usage: talk <name> [list|buy <item>|leave]");
+      return;
+    }
+
+    const [target, subAction, ...itemParts] = rest;
+    const normalized = subAction?.toLowerCase();
+    let action: "list" | "buy" | "leave" | undefined;
+    let item: string | undefined;
+
+    if (!subAction) {
+      action = "list";
+    } else if (normalized === "list") {
+      action = "list";
+    } else if (normalized === "leave") {
+      action = "leave";
+    } else if (normalized === "buy") {
+      action = "buy";
+      item = itemParts.join(" ");
+      if (!item) {
+        console.log("Usage: talk <name> buy <item>");
+        return;
+      }
+    }
+
+    sendCommand(ws, { type: "talk", target, action, item });
     return;
   }
 

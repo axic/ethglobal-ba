@@ -15,6 +15,17 @@ export interface Room {
   createdAt: string;
 }
 
+export type NpcClass = "normie" | "vendor";
+
+export interface VendorStockItem {
+  name: string;
+  type: "weapon" | "armor" | "item";
+  quantity: number | "unlimited";
+  attackRating?: number;
+  cost?: number;
+  description?: string;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -22,6 +33,9 @@ export interface User {
   attackRating: number;
   isNpc: boolean;
   inventory: Inventory;
+  creds: number;
+  npcClass?: NpcClass;
+  vendorStock?: VendorStockItem[];
   description?: string;
 }
 
@@ -44,7 +58,8 @@ export type ClientCommand =
   | { type: "move"; direction: Direction }
   | { type: "setName"; name: string }
   | { type: "attack"; target: string }
-  | { type: "status" };
+  | { type: "status" }
+  | { type: "talk"; target: string; action?: "list" | "buy" | "leave"; item?: string };
 
 // Server → client
 
