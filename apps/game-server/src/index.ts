@@ -7,7 +7,8 @@ import {
   PlayerState,
   Room,
   ExitRef,
-  WorldBuilderRoomInputContext
+  WorldBuilderRoomInputContext,
+  Inventory
 } from "@ethglobal-ba/shared/src/types";
 import { generateRoomsForExit } from "@ethglobal-ba/llm/src/worldBuilder";
 import { generateNormieProfile } from "@ethglobal-ba/llm/src/normieProfile";
@@ -28,6 +29,46 @@ const rooms = new Map<string, Room>();
 const players = new Map<string, PlayerState>();
 const connections = new Map<string, ConnectionContext>();
 const npcs = new Map<string, PlayerState>();
+
+function createEmptyInventory(): Inventory {
+  return {
+    weapon: null,
+    armor: null,
+    items: Array(20).fill(null)
+  };
+}
+
+function describeWeaponSlot(inventory: Inventory): string {
+  return inventory.weapon ?? "fist is equipped";
+}
+
+function describeArmorSlot(inventory: Inventory): string {
+  return inventory.armor ?? "(empty)";
+}
+
+function formatInventory(inventory: Inventory): string {
+  const lines = [
+    `Weapon slot: ${describeWeaponSlot(inventory)}`,
+    `Armor slot: ${describeArmorSlot(inventory)}`,
+    "Item slots:"
+  ];
+
+  inventory.items.forEach((item, index) => {
+    lines.push(`  ${index + 1}. ${item ?? "(empty)"}`);
+  });
+
+  return lines.join("\n");
+}
+
+function formatStatus(player: PlayerState): string {
+  return [
+    `Name: ${player.name}`,
+    `Health: ${player.health}`,
+    `Attack rating: ${player.attackRating}`,
+    `Weapon: ${describeWeaponSlot(player.inventory)}`,
+    `Armor: ${describeArmorSlot(player.inventory)}`
+  ].join("\n");
+}
 
 function createInitialWorld(): Room {
   const id = "hub-1";
@@ -107,6 +148,7 @@ async function maybeSpawnNormie(room: Room): Promise<void> {
       health,
       attackRating: NORMIE_ATTACK_RATING,
       isNpc: true,
+      inventory: createEmptyInventory(),
       roomId: room.id,
       lastActiveAt: nowIso()
     };
@@ -140,13 +182,14 @@ function handleAttack(player: PlayerState, room: Room, target: string): void {
   }
 
   const damage = Math.max(0, player.attackRating);
+  const attackerWeapon = player.inventory.weapon ?? "their fist";
   npc.health = Math.max(0, npc.health - damage);
   npc.lastActiveAt = nowIso();
 
   broadcastToRoom(room.id, {
     type: "system",
     ts: nowIso(),
-    message: `${player.name} attacks ${npc.name} for ${damage} damage. (${npc.health} hp left)`
+    message: `${player.name} attacks ${npc.name} with ${attackerWeapon} for ${damage} damage. (${npc.health} hp left)`
   });
 
   if (npc.health <= 0) {
@@ -160,13 +203,14 @@ function handleAttack(player: PlayerState, room: Room, target: string): void {
   }
 
   const retaliation = Math.max(0, npc.attackRating);
+  const npcWeapon = npc.inventory.weapon ?? "their fist";
   player.health = Math.max(0, player.health - retaliation);
   player.lastActiveAt = nowIso();
 
   broadcastToRoom(room.id, {
     type: "system",
     ts: nowIso(),
-    message: `${npc.name} strikes back for ${retaliation} damage! ${player.name} has ${player.health} hp.`
+    message: `${npc.name} strikes back with ${npcWeapon} for ${retaliation} damage! ${player.name} has ${player.health} hp.`
   });
 
   if (player.health <= 0) {
@@ -192,6 +236,24 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
       type: "system",
       ts: nowIso(),
       message: `You are now known as ${player.name}.`
+    });
+    return;
+  }
+
+  if (command.type === "status") {
+    sendEvent(playerId, {
+      type: "system",
+      ts: nowIso(),
+      message: formatStatus(player)
+    });
+    return;
+  }
+
+  if (command.type === "inventory") {
+    sendEvent(playerId, {
+      type: "system",
+      ts: nowIso(),
+      message: formatInventory(player.inventory)
     });
     return;
   }
@@ -355,6 +417,12 @@ function parseClientCommand(raw: string): ClientCommand | null {
     if (parsed.type === "attack" && typeof parsed.target === "string") {
       return { type: "attack", target: parsed.target };
     }
+    if (parsed.type === "status") {
+      return { type: "status" };
+    }
+    if (parsed.type === "inventory") {
+      return { type: "inventory" };
+    }
   } catch {
     return null;
   }
@@ -371,6 +439,7 @@ wss.on("connection", (socket: WebSocket) => {
     health: 100,
     attackRating: 10,
     isNpc: false,
+    inventory: createEmptyInventory(),
     roomId: hubRoom.id,
     lastActiveAt: nowIso()
   };

@@ -21,7 +21,14 @@ export interface User {
   health: number;
   attackRating: number;
   isNpc: boolean;
+  inventory: Inventory;
   description?: string;
+}
+
+export interface Inventory {
+  weapon: string | null;
+  armor: string | null;
+  items: (string | null)[];
 }
 
 export interface PlayerState extends User {
@@ -36,7 +43,9 @@ export type ClientCommand =
   | { type: "say"; message: string }
   | { type: "move"; direction: Direction }
   | { type: "setName"; name: string }
-  | { type: "attack"; target: string };
+  | { type: "attack"; target: string }
+  | { type: "status" }
+  | { type: "inventory" };
 
 // Server → client
 
