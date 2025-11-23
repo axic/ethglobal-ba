@@ -61,7 +61,7 @@ Constraints:
 - The new room must be thematically consistent with the current room.
 - Never reference specific players by name.
 - Keep room descriptions under ~160 words.
-- Exits must be simple text directions like "north", "south", "east", "west", "up", "down".
+- Exits must be simple text directions like "north", "south", "east", "west", "up", "down", "up the stairs", "down to the cellar".
   `.trim();
 
   const userPrompt = `
@@ -77,7 +77,7 @@ Current room:
 
 The player is moving: ${ctx.direction}
 
-Return JSON for 1-2 new rooms to place beyond that direction.
+Return JSON for 1-4 new rooms to place beyond that direction.
   `.trim();
 
   const completion = await openai.chat.completions.create({
