@@ -1,9 +1,10 @@
-# ethglobal-ba — LLM MUD Initial Skeleton
+# ethglobal-ba -- Caverna
 
-This is a starter monorepo for an LLM-powered text MUD / MMORPG.
+This is a simple for an LLM-powered text MUD / MMORPG.
 
 ## Structure
 
+- `apps/game-client` — Simple text client.
 - `apps/game-server` — Node WebSocket server with dynamic, LLM-generated rooms (in-memory for now).
 - `packages/shared` — Shared TypeScript types and protocol.
 - `packages/llm` — LLM wrapper for the world-builder.
@@ -28,17 +29,8 @@ This is a starter monorepo for an LLM-powered text MUD / MMORPG.
    npm run dev:game
    ```
 
-4. Connect via WebSocket (for example using `wscat`):
+4. Connect to the game server via a simple client:
 
    ```bash
-   npx wscat -c ws://localhost:4000
-   ```
-
-5. Try commands:
-
-   ```json
-   {"type":"look"}
-   {"type":"move","direction":"north"}
-   {"type":"say","message":"Hello, world!"}
-   {"type":"setName","name":"Alice"}
+   npm run dev:client
    ```
