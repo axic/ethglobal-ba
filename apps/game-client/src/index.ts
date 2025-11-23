@@ -42,7 +42,15 @@ function renderRoom(event: WelcomeEvent | RoomDescriptionEvent): void {
   console.log(event.room.description);
 
   if (otherPlayers && otherPlayers.length > 0) {
-    const names = otherPlayers.map((p) => p.name).join(", ");
+    const names = otherPlayers
+      .map((p) => {
+        if (p.isNpc) {
+          const desc = p.description ? ` - ${p.description}` : "";
+          return `${p.name} (Normie, HP ${p.health})${desc ? `: ${desc}` : ""}`;
+        }
+        return p.name;
+      })
+      .join("; ");
     console.log("You see: %s", names);
   }
 
@@ -90,6 +98,7 @@ function printHelp(): void {
   console.log("  look                Describe your surroundings");
   console.log("  say <message>       Speak to others in the room");
   console.log("  move <direction>    Move north/south/east/west/up/down");
+  console.log("  attack <name>       Attack a Normie in the room");
   console.log("  name <new name>     Change your display name");
   console.log("  help                Show this help text");
   console.log("  quit                Exit the client");
@@ -136,6 +145,15 @@ function interpretInput(line: string, ws: WebSocket): void {
       return;
     }
     sendCommand(ws, { type: "move", direction: arg });
+    return;
+  }
+
+  if (lower === "attack") {
+    if (!arg) {
+      console.log("Usage: attack <name>");
+      return;
+    }
+    sendCommand(ws, { type: "attack", target: arg });
     return;
   }
 
