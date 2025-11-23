@@ -44,8 +44,7 @@ export type ClientCommand =
   | { type: "move"; direction: Direction }
   | { type: "setName"; name: string }
   | { type: "attack"; target: string }
-  | { type: "status" }
-  | { type: "inventory" };
+  | { type: "status" };
 
 // Server → client
 

@@ -47,15 +47,26 @@ function describeArmorSlot(inventory: Inventory): string {
 }
 
 function formatInventory(inventory: Inventory): string {
-  const lines = [
+  const equipped = [
     `Weapon slot: ${describeWeaponSlot(inventory)}`,
-    `Armor slot: ${describeArmorSlot(inventory)}`,
-    "Item slots:"
+    `Armor slot: ${describeArmorSlot(inventory)}`
   ];
 
-  inventory.items.forEach((item, index) => {
-    lines.push(`  ${index + 1}. ${item ?? "(empty)"}`);
-  });
+  const items = inventory.items.filter((item): item is string => item !== null);
+  const freeSlots = inventory.items.length - items.length;
+
+  const lines = [...equipped];
+
+  if (items.length > 0) {
+    lines.push("Items:");
+    items.forEach((item, index) => {
+      lines.push(`  ${index + 1}. ${item}`);
+    });
+  } else {
+    lines.push("Items: (none)");
+  }
+
+  lines.push(`${freeSlots} slots free`);
 
   return lines.join("\n");
 }
@@ -68,6 +79,10 @@ function formatStatus(player: PlayerState): string {
     `Weapon: ${describeWeaponSlot(player.inventory)}`,
     `Armor: ${describeArmorSlot(player.inventory)}`
   ].join("\n");
+}
+
+function formatStatusWithInventory(player: PlayerState): string {
+  return [formatStatus(player), "", formatInventory(player.inventory)].join("\n");
 }
 
 function createInitialWorld(): Room {
@@ -244,16 +259,7 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
     sendEvent(playerId, {
       type: "system",
       ts: nowIso(),
-      message: formatStatus(player)
-    });
-    return;
-  }
-
-  if (command.type === "inventory") {
-    sendEvent(playerId, {
-      type: "system",
-      ts: nowIso(),
-      message: formatInventory(player.inventory)
+      message: formatStatusWithInventory(player)
     });
     return;
   }
@@ -421,7 +427,7 @@ function parseClientCommand(raw: string): ClientCommand | null {
       return { type: "status" };
     }
     if (parsed.type === "inventory") {
-      return { type: "inventory" };
+      return { type: "status" };
     }
   } catch {
     return null;
