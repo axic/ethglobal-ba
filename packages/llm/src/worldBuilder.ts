@@ -15,16 +15,40 @@ const ExitSchema = z.object({
   targetRoomId: z.string().nullable().default(null)
 });
 
+const ExitRecordSchema = z.record(z.string());
+
+function normalizeTargetRoomId(target: string | null | undefined): string | null {
+  if (!target) return null;
+  return target.toLowerCase() === "unknown" ? null : target;
+}
+
+function normalizeExits(
+  exits: z.infer<typeof ExitSchema>[] | z.infer<typeof ExitRecordSchema>
+): z.infer<typeof ExitSchema>[] {
+  if (Array.isArray(exits)) {
+    return exits;
+  }
+
+  return Object.entries(exits).map(([direction, targetRoomId]) => ({
+    direction,
+    targetRoomId: normalizeTargetRoomId(targetRoomId)
+  }));
+}
+
 const RoomSchema = z.object({
   name: z.string(),
   description: z.string(),
   isHub: z.boolean().optional(),
-  exits: z.array(ExitSchema)
+  exits: z
+    .union([z.array(ExitSchema), ExitRecordSchema])
+    .transform((exits) => normalizeExits(exits))
 });
 
 const WorldBuilderResponseSchema = z.object({
   rooms: z.array(RoomSchema)
 });
+
+type WorldBuilderRoomSchemaOutput = z.infer<typeof RoomSchema>;
 
 export async function generateRoomsForExit(
   ctx: WorldBuilderRoomInputContext
@@ -72,12 +96,14 @@ Return JSON for 1-2 new rooms to place beyond that direction.
   const parsed = WorldBuilderResponseSchema.parse(JSON.parse(raw));
 
   const result: WorldBuilderResponse = {
-    newRooms: parsed.rooms.map((r: any): WorldBuilderRoomOutput => ({
-      name: r.name,
-      description: r.description,
-      isHub: r.isHub ?? false,
-      exits: r.exits
-    }))
+    newRooms: parsed.rooms.map(
+      (r: WorldBuilderRoomSchemaOutput): WorldBuilderRoomOutput => ({
+        name: r.name,
+        description: r.description,
+        isHub: r.isHub ?? false,
+        exits: r.exits
+      })
+    )
   };
 
   return result;
