@@ -49,15 +49,11 @@ function describeVendorStock(stock: PlayerState["vendorStock"]): string | null {
 }
 
 function describeNpc(npc: PlayerState): string {
-  const desc = npc.description ? ` - ${npc.description}` : "";
-
   if (npc.npcClass === "vendor") {
-    const stock = describeVendorStock(npc.vendorStock);
-    const stockInfo = stock ? ` Stock: ${stock}` : "";
-    return `${npc.name} (Vendor)${desc}${stockInfo}`;
+    return `${npc.name} (Vendor)${npc.description ? `: ${npc.description}` : ""}`;
   }
 
-  return `${npc.name} (Normie, HP ${npc.health})${desc ? `: ${desc}` : ""}`;
+  return `${npc.name} (Normie, HP ${npc.health})${npc.description ? `: ${npc.description}` : ""}`;
 }
 
 function renderRoom(event: WelcomeEvent | RoomDescriptionEvent): void {
@@ -68,8 +64,8 @@ function renderRoom(event: WelcomeEvent | RoomDescriptionEvent): void {
   console.log(event.room.description);
 
   if (otherPlayers && otherPlayers.length > 0) {
-    const names = otherPlayers.map((p) => (p.isNpc ? describeNpc(p) : p.name)).join("; ");
-    console.log("You see: %s", names);
+    const names = otherPlayers.map((p) => (p.isNpc ? describeNpc(p) : p.name)).join("\n");
+    console.log("You see:\n%s", names);
   }
 
   const exits = event.room.exits.map((exit) => exit.direction);
