@@ -118,6 +118,8 @@ function printHelp(): void {
   console.log("  move <direction>    Move north/south/east/west/up/down");
   console.log("  attack <name>       Attack a Normie in the room");
   console.log("  talk <name> [...]   Talk to an NPC: list, buy <item>, or leave");
+  console.log("  equip <item>        Equip an item from your inventory");
+  console.log("  unequip [slot]      Unequip weapon or armor back to your pack");
   console.log("  status              Show your stats and inventory");
   console.log("  name <new name>     Change your display name");
   console.log("  help                Show this help text");
@@ -184,6 +186,27 @@ function interpretInput(line: string, ws: WebSocket): void {
       return;
     }
     sendCommand(ws, { type: "attack", target: arg });
+    return;
+  }
+
+  if (lower === "equip") {
+    if (!arg) {
+      console.log("Usage: equip <item>");
+      return;
+    }
+
+    sendCommand(ws, { type: "equip", item: arg });
+    return;
+  }
+
+  if (lower === "unequip") {
+    if (arg && arg.toLowerCase() !== "weapon" && arg.toLowerCase() !== "armor") {
+      console.log("Usage: unequip [weapon|armor]");
+      return;
+    }
+
+    const slot = arg ? (arg.toLowerCase() as "weapon" | "armor") : undefined;
+    sendCommand(ws, { type: "unequip", slot });
     return;
   }
 
