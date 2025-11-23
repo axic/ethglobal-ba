@@ -1,0 +1,21 @@
+{
+  "name": "ethglobal-ba",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:game": "npm --workspace apps/game-server run dev",
+    "build:game": "npm --workspace apps/game-server run build",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.29.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.6.0"
+  }
+}
