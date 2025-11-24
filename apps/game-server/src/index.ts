@@ -167,7 +167,21 @@ function createInitialWorld(): Room {
     createdAt: new Date().toISOString()
   };
 
+  const vault: Room = {
+    id: "vault-1",
+    name: "The Vault",
+    description:
+      "A silent chamber of reinforced walls and suspended particle dust. It feels abandoned, yet the air hums with dormant security protocols.",
+    regionId: hub.regionId,
+    isHub: false,
+    exits: [{ direction: "down", targetRoomId: hub.id }],
+    createdAt: new Date().toISOString()
+  };
+
+  hub.exits.push({ direction: "up", targetRoomId: vault.id });
+
   rooms.set(id, hub);
+  rooms.set(vault.id, vault);
   return hub;
 }
 
