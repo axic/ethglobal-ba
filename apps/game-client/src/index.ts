@@ -59,6 +59,7 @@ function describeNpc(npc: PlayerState): string {
 function renderRoom(event: WelcomeEvent | RoomDescriptionEvent): void {
   state.room = event.room;
   const otherPlayers = "otherPlayers" in event ? event.otherPlayers : [];
+  const objects = "roomObjects" in event ? event.roomObjects ?? [] : [];
 
   console.log("\n=== %s ===", event.room.name);
   console.log(event.room.description);
@@ -66,6 +67,16 @@ function renderRoom(event: WelcomeEvent | RoomDescriptionEvent): void {
   if (otherPlayers && otherPlayers.length > 0) {
     const names = otherPlayers.map((p) => (p.isNpc ? describeNpc(p) : p.name)).join("\n");
     console.log("You see:\n%s", names);
+  }
+
+  if (objects.length > 0) {
+    const descriptions = objects
+      .map((obj) => {
+        const traits = obj.traits && obj.traits.length > 0 ? ` [${obj.traits.join("; ")}]` : "";
+        return `${obj.name}${traits}: ${obj.description}`;
+      })
+      .join("\n");
+    console.log("Notable objects:\n%s", descriptions);
   }
 
   const exits = event.room.exits.map((exit) => exit.direction);
@@ -112,6 +123,10 @@ function printHelp(): void {
   console.log("  look                Describe your surroundings");
   console.log("  say <message>       Speak to others in the room");
   console.log("  move <direction>    Move north/south/east/west/up/down");
+  console.log("  open <chest>        Open a chest (may have a cost)");
+  console.log("  close <chest>       Close a chest");
+  console.log("  take <chest> <item> Take an item from a chest");
+  console.log("  put <chest> <item>  Place an item into a chest");
   console.log("  attack <name>       Attack a Normie in the room");
   console.log("  talk <name> [...]   Talk to an NPC: list, buy <item>, or leave");
   console.log("  equip <item>        Equip an item from your inventory");
@@ -163,6 +178,50 @@ function interpretInput(line: string, ws: WebSocket): void {
       return;
     }
     sendCommand(ws, { type: "move", direction: arg });
+    return;
+  }
+
+  if (lower === "open") {
+    if (!arg) {
+      console.log("Usage: open <chest>");
+      return;
+    }
+    sendCommand(ws, { type: "open", target: arg });
+    return;
+  }
+
+  if (lower === "close") {
+    if (!arg) {
+      console.log("Usage: close <chest>");
+      return;
+    }
+    sendCommand(ws, { type: "close", target: arg });
+    return;
+  }
+
+  if (lower === "take") {
+    const [target, ...itemParts] = rest;
+    const item = itemParts.join(" ");
+
+    if (!target || !item) {
+      console.log("Usage: take <chest> <item>");
+      return;
+    }
+
+    sendCommand(ws, { type: "take", target, item });
+    return;
+  }
+
+  if (lower === "put") {
+    const [target, ...itemParts] = rest;
+    const item = itemParts.join(" ");
+
+    if (!target || !item) {
+      console.log("Usage: put <chest> <item>");
+      return;
+    }
+
+    sendCommand(ws, { type: "put", target, item });
     return;
   }
 

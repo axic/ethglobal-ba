@@ -17,6 +17,19 @@ export interface Room {
 
 export type NpcClass = "normie" | "vendor";
 
+export type RoomObjectType = "chest";
+
+export interface ChestObject {
+  id: string;
+  type: "chest";
+  name: string;
+  description: string;
+  traits?: string[];
+  isOpen: boolean;
+}
+
+export type RoomObject = ChestObject;
+
 export interface VendorStockItem {
   name: string;
   type: "weapon" | "armor" | "item";
@@ -64,7 +77,11 @@ export type ClientCommand =
   | { type: "status" }
   | { type: "talk"; target: string; action?: "list" | "buy" | "leave"; item?: string }
   | { type: "equip"; item: string }
-  | { type: "unequip"; slot?: "weapon" | "armor" };
+  | { type: "unequip"; slot?: "weapon" | "armor" }
+  | { type: "open"; target: string }
+  | { type: "close"; target: string }
+  | { type: "take"; target: string; item: string }
+  | { type: "put"; target: string; item: string };
 
 // Server → client
 
@@ -84,12 +101,14 @@ export interface WelcomeEvent extends ServerEventBase {
   type: "welcome";
   player: PlayerState;
   room: Room;
+  roomObjects?: RoomObject[];
 }
 
 export interface RoomDescriptionEvent extends ServerEventBase {
   type: "roomDescription";
   room: Room;
   otherPlayers: PlayerState[];
+  roomObjects?: RoomObject[];
 }
 
 export interface ChatEvent extends ServerEventBase {
