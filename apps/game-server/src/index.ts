@@ -1,6 +1,8 @@
 import "dotenv/config";
+import http from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { randomUUID } from "crypto";
+import { hasPaymentProof as hasX402PaymentProof, sendPaymentRequired } from "x402";
 import {
   ClientCommand,
   ServerEvent,
@@ -16,6 +18,9 @@ import { generateRoomsForExit } from "@ethglobal-ba/llm/src/worldBuilder";
 import { generateNormieProfile } from "@ethglobal-ba/llm/src/normieProfile";
 
 const PORT = Number(process.env.GAME_SERVER_PORT ?? 4000);
+const HTTP_PORT = Number(process.env.GAME_HTTP_PORT ?? 3000);
+const TOPUP_PRICE_USDC = 0.01;
+const TOPUP_CREDITS = 100;
 const NORMIE_ATTACK_RATING = 10;
 const NORMIE_MIN_HEALTH = 15;
 const NORMIE_MAX_HEALTH = 100;
@@ -34,6 +39,16 @@ const players = new Map<string, PlayerState>();
 const connections = new Map<string, ConnectionContext>();
 const npcs = new Map<string, PlayerState>();
 const WORLD_START_ISO = nowIso();
+
+function getHttpBaseUrl(): string {
+  const envBase = process.env.GAME_HTTP_BASE_URL;
+  if (envBase) return envBase.replace(/\/$/, "");
+  return `http://localhost:${HTTP_PORT}`;
+}
+
+function buildTopupUrl(playerId: string): string {
+  return `${getHttpBaseUrl()}/x402/payments/${playerId}`;
+}
 
 const BROKEN_LEDGER: VendorStockItem = {
   name: "Broken Ledger",
@@ -319,7 +334,9 @@ function removeItemFromInventory(inventory: Inventory, itemName: string): string
   return found;
 }
 
-function identifyItem(itemName: string): { type: VendorStockItem["type"]; attackRating?: number } | null {
+function identifyItem(
+  itemName: string
+): { type: VendorStockItem["type"]; attackRating?: number; healAmount?: number } | null {
   return ITEM_DEFINITIONS[itemName.toLowerCase()] ?? null;
 }
 
@@ -327,7 +344,7 @@ function handleTalk(
   player: PlayerState,
   room: Room,
   target: string,
-  action: ClientCommand["action"],
+  action: Extract<ClientCommand, { type: "talk" }>["action"],
   itemName?: string
 ): void {
   const vendor = findVendorInRoom(room.id, target);
@@ -580,6 +597,18 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
       type: "system",
       ts: nowIso(),
       message: formatStatusWithInventory(player)
+    });
+    return;
+  }
+
+  if (command.type === "topup") {
+    const topupUrl = buildTopupUrl(playerId);
+    sendEvent(playerId, {
+      type: "system",
+      ts: nowIso(),
+      message:
+        `Top up by sending a paid request to ${topupUrl}. ` +
+        `Requests missing proof will respond with HTTP 402 showing the ${TOPUP_PRICE_USDC} USDC price for ${TOPUP_CREDITS} creds.`
     });
     return;
   }
@@ -937,6 +966,9 @@ function parseClientCommand(raw: string): ClientCommand | null {
     if (parsed.type === "status") {
       return { type: "status" };
     }
+    if (parsed.type === "topup") {
+      return { type: "topup" };
+    }
     if (parsed.type === "inventory") {
       return { type: "status" };
     }
@@ -966,6 +998,77 @@ function parseClientCommand(raw: string): ClientCommand | null {
   }
   return null;
 }
+
+function writeJson(
+  res: http.ServerResponse,
+  statusCode: number,
+  body: Record<string, unknown>,
+  headers: Record<string, string> = {}
+): void {
+  res.writeHead(statusCode, {
+    "content-type": "application/json",
+    ...headers
+  });
+  res.end(JSON.stringify(body));
+}
+
+function respondWith402(res: http.ServerResponse, player: PlayerState): void {
+  sendPaymentRequired(res, {
+    amount: TOPUP_PRICE_USDC,
+    asset: "USDC",
+    credits: TOPUP_CREDITS,
+    reason: `Top up credits for ${player.name}`,
+    message: `Send ${TOPUP_PRICE_USDC} USDC to top up ${TOPUP_CREDITS} creds for ${player.name}.`
+  });
+}
+
+function handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+
+  if (url.pathname === "/") {
+    writeJson(res, 200, {
+      status: "ok",
+      message: "Caverna game server HTTP + X402 endpoint"
+    });
+    return;
+  }
+
+  if (url.pathname.startsWith("/x402/payments/")) {
+    const playerId = url.pathname.split("/").pop() ?? "";
+    const player = players.get(playerId);
+
+    if (!player) {
+      writeJson(res, 404, { error: "not_found", message: "Player not found" });
+      return;
+    }
+
+    if (!hasX402PaymentProof(req)) {
+      respondWith402(res, player);
+      return;
+    }
+
+    player.creds += TOPUP_CREDITS;
+    sendEvent(playerId, {
+      type: "system",
+      ts: nowIso(),
+      message: `Payment received! ${TOPUP_CREDITS} creds added. Balance: ${player.creds}.`
+    });
+
+    writeJson(res, 200, {
+      status: "ok",
+      creditsAdded: TOPUP_CREDITS,
+      balance: player.creds
+    });
+    return;
+  }
+
+  writeJson(res, 404, { error: "not_found", message: "Unknown path" });
+}
+
+const httpServer = http.createServer(handleHttpRequest);
+httpServer.listen(HTTP_PORT, () => {
+  console.log(`HTTP/X402 server listening on http://localhost:${HTTP_PORT}`);
+});
 
 const wss = new WebSocketServer({ port: PORT });
 

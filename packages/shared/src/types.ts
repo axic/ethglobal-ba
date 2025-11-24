@@ -62,6 +62,7 @@ export type ClientCommand =
   | { type: "setName"; name: string }
   | { type: "attack"; target: string }
   | { type: "status" }
+  | { type: "topup" }
   | { type: "talk"; target: string; action?: "list" | "buy" | "leave"; item?: string }
   | { type: "equip"; item: string }
   | { type: "unequip"; slot?: "weapon" | "armor" };

@@ -116,6 +116,7 @@ function printHelp(): void {
   console.log("  talk <name> [...]   Talk to an NPC: list, buy <item>, or leave");
   console.log("  equip <item>        Equip an item from your inventory");
   console.log("  unequip [slot]      Unequip weapon or armor back to your pack");
+  console.log("  topup               Get an X402 payment link to add 100 creds for 0.01 USDC");
   console.log("  status              Show your stats and inventory");
   console.log("  name <new name>     Change your display name");
   console.log("  help                Show this help text");
@@ -168,6 +169,11 @@ function interpretInput(line: string, ws: WebSocket): void {
 
   if (lower === "status") {
     sendCommand(ws, { type: "status" });
+    return;
+  }
+
+  if (lower === "topup") {
+    sendCommand(ws, { type: "topup" });
     return;
   }
 
