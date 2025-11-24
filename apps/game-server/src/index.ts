@@ -10,10 +10,12 @@ import {
   ExitRef,
   WorldBuilderRoomInputContext,
   Inventory,
-  VendorStockItem
+  VendorStockItem,
+  RoomObject
 } from "@ethglobal-ba/shared/src/types";
 import { generateRoomsForExit } from "@ethglobal-ba/llm/src/worldBuilder";
 import { generateNormieProfile } from "@ethglobal-ba/llm/src/normieProfile";
+import { generateRandomWeapon } from "@ethglobal-ba/llm/src/randomWeapon";
 
 const PORT = Number(process.env.GAME_SERVER_PORT ?? 4000);
 const NORMIE_ATTACK_RATING = 10;
@@ -33,7 +35,9 @@ const rooms = new Map<string, Room>();
 const players = new Map<string, PlayerState>();
 const connections = new Map<string, ConnectionContext>();
 const npcs = new Map<string, PlayerState>();
+const chests = new Map<string, ChestState>();
 const WORLD_START_ISO = nowIso();
+const CHEST_CAPACITY = 5;
 
 const BROKEN_LEDGER: VendorStockItem = {
   name: "Broken Ledger",
@@ -77,24 +81,31 @@ interface ItemDefinition {
   healAmount?: number;
 }
 
-const ITEM_DEFINITIONS: Record<string, ItemDefinition> = {
-  [BROKEN_LEDGER.name.toLowerCase()]: {
-    type: BROKEN_LEDGER.type,
-    attackRating: BROKEN_LEDGER.attackRating
-  },
-  [COFFEE.name.toLowerCase()]: {
-    type: COFFEE.type,
-    healAmount: COFFEE.healAmount
-  },
-  [MONSTER.name.toLowerCase()]: {
-    type: MONSTER.type,
-    healAmount: MONSTER.healAmount
-  },
-  [MATE.name.toLowerCase()]: {
-    type: MATE.type,
-    healAmount: MATE.healAmount
-  }
-};
+const ITEM_DEFINITIONS = new Map<string, ItemDefinition>();
+
+function registerItemDefinition(name: string, def: ItemDefinition): void {
+  ITEM_DEFINITIONS.set(name.toLowerCase(), def);
+}
+
+registerItemDefinition(BROKEN_LEDGER.name, {
+  type: BROKEN_LEDGER.type,
+  attackRating: BROKEN_LEDGER.attackRating
+});
+registerItemDefinition(COFFEE.name, { type: COFFEE.type, healAmount: COFFEE.healAmount });
+registerItemDefinition(MONSTER.name, { type: MONSTER.type, healAmount: MONSTER.healAmount });
+registerItemDefinition(MATE.name, { type: MATE.type, healAmount: MATE.healAmount });
+
+interface ChestState {
+  id: string;
+  name: string;
+  description: string;
+  roomId: string;
+  isOpen: boolean;
+  items: string[];
+  traits: string[];
+  costPerOpen?: number;
+  ephemeralLoot?: boolean;
+}
 
 const FIST_ATTACK_RATING = 10;
 const PLAYER_MAX_HEALTH = 100;
@@ -194,6 +205,27 @@ function createInitialWorld(): Room {
 }
 
 const hubRoom = createInitialWorld();
+
+function spawnVaultChest(): void {
+  const vault = rooms.get("vault-1");
+  if (!vault) return;
+
+  const ominousChest: ChestState = {
+    id: "chest-vault-ominous",
+    name: "Ominous Chest",
+    description: "A heavy coffer etched with warnings that flicker in red light.",
+    roomId: vault.id,
+    isOpen: false,
+    items: [],
+    costPerOpen: 42,
+    traits: ["Costs 42 creds every time it's opened", "Loot vanishes once the lid closes"],
+    ephemeralLoot: true
+  };
+
+  chests.set(ominousChest.id, ominousChest);
+}
+
+spawnVaultChest();
 
 function spawnVendorChet(): void {
   const vendorInventory = createEmptyInventory();
@@ -320,7 +352,38 @@ function removeItemFromInventory(inventory: Inventory, itemName: string): string
 }
 
 function identifyItem(itemName: string): { type: VendorStockItem["type"]; attackRating?: number } | null {
-  return ITEM_DEFINITIONS[itemName.toLowerCase()] ?? null;
+  return ITEM_DEFINITIONS.get(itemName.toLowerCase()) ?? null;
+}
+
+function listChestsInRoom(roomId: string): ChestState[] {
+  return Array.from(chests.values()).filter((chest) => chest.roomId === roomId);
+}
+
+function findChestInRoom(roomId: string, target: string): ChestState | undefined {
+  const lower = target.toLowerCase();
+  return listChestsInRoom(roomId).find((chest) => chest.name.toLowerCase() === lower);
+}
+
+function formatChestInventory(chest: ChestState): string {
+  if (chest.items.length === 0) {
+    return `${chest.name} is empty.`;
+  }
+
+  return [
+    `${chest.name} contains:`,
+    ...chest.items.map((item, idx) => `  ${idx + 1}. ${item}`)
+  ].join("\n");
+}
+
+function describeRoomObjects(roomId: string): RoomObject[] {
+  return listChestsInRoom(roomId).map<RoomObject>((chest) => ({
+    id: chest.id,
+    name: chest.name,
+    description: chest.description,
+    type: "chest",
+    traits: chest.traits,
+    isOpen: chest.isOpen
+  }));
 }
 
 function handleTalk(
@@ -420,6 +483,246 @@ function handleTalk(
     type: "error",
     ts: nowIso(),
     message: "Chet tilts his head. Try list, buy, or leave.",
+  });
+}
+
+async function handleOpenChest(player: PlayerState, room: Room, target: string): Promise<void> {
+  const chest = findChestInRoom(room.id, target);
+
+  if (!chest) {
+    sendEvent(player.id, {
+      type: "error",
+      ts: nowIso(),
+      message: `You don't see ${target} to open here.`,
+    });
+    return;
+  }
+
+  if (chest.isOpen) {
+    sendEvent(player.id, {
+      type: "system",
+      ts: nowIso(),
+      message: `${chest.name} is already open.\n${formatChestInventory(chest)}`
+    });
+    return;
+  }
+
+  const cost = chest.costPerOpen ?? 0;
+  if (player.creds < cost) {
+    sendEvent(player.id, {
+      type: "error",
+      ts: nowIso(),
+      message: `${chest.name} demands ${cost} creds to open, but you only have ${player.creds}.`,
+    });
+    return;
+  }
+
+  player.creds -= cost;
+  chest.isOpen = true;
+  chest.items = [];
+
+  let generated: VendorStockItem | null = null;
+
+  try {
+    generated = await generateRandomWeapon();
+  } catch (err) {
+    console.error("Failed to generate random weapon:", err);
+  }
+
+  if (!generated) {
+    generated = { ...BROKEN_LEDGER, quantity: 1 };
+  }
+
+  registerItemDefinition(generated.name, {
+    type: generated.type,
+    attackRating: generated.attackRating,
+    healAmount: generated.healAmount
+  });
+
+  chest.items.push(generated.name);
+
+  const warnings = [
+    chest.traits.join("; "),
+    chest.ephemeralLoot ? "Anything left inside will dissolve when closed." : undefined
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  sendEvent(player.id, {
+    type: "system",
+    ts: nowIso(),
+    message: [
+      `${chest.name} rumbles open (-${cost} creds). ${warnings}`.trim(),
+      formatChestInventory(chest)
+    ].join("\n")
+  });
+}
+
+function handleCloseChest(player: PlayerState, room: Room, target: string): void {
+  const chest = findChestInRoom(room.id, target);
+
+  if (!chest) {
+    sendEvent(player.id, {
+      type: "error",
+      ts: nowIso(),
+      message: `There is no ${target} here to close.`,
+    });
+    return;
+  }
+
+  if (!chest.isOpen) {
+    sendEvent(player.id, {
+      type: "error",
+      ts: nowIso(),
+      message: `${chest.name} is already sealed.`,
+    });
+    return;
+  }
+
+  const hadLoot = chest.items.length > 0;
+  chest.items = [];
+  chest.isOpen = false;
+
+  const warning = chest.ephemeralLoot && hadLoot
+    ? "The moment it shuts, any lingering loot dissolves into ash."
+    : "";
+
+  sendEvent(player.id, {
+    type: "system",
+    ts: nowIso(),
+    message: `${chest.name} slams shut. ${warning}`.trim()
+  });
+}
+
+function handleTakeFromChest(
+  player: PlayerState,
+  room: Room,
+  target: string,
+  itemName: string
+): void {
+  const chest = findChestInRoom(room.id, target);
+
+  if (!chest) {
+    sendEvent(player.id, {
+      type: "error",
+      ts: nowIso(),
+      message: `No ${target} is present here.`,
+    });
+    return;
+  }
+
+  if (!chest.isOpen) {
+    sendEvent(player.id, {
+      type: "error",
+      ts: nowIso(),
+      message: `${chest.name} is closed. Open it first.`,
+    });
+    return;
+  }
+
+  const idx = chest.items.findIndex((item) => item.toLowerCase() === itemName.toLowerCase());
+  if (idx === -1) {
+    sendEvent(player.id, {
+      type: "error",
+      ts: nowIso(),
+      message: `${chest.name} doesn't hold ${itemName}.`,
+    });
+    return;
+  }
+
+  const found = chest.items[idx];
+  if (!addItemToInventory(player.inventory, found)) {
+    sendEvent(player.id, {
+      type: "error",
+      ts: nowIso(),
+      message: "Your pack is full. Make space before looting the chest.",
+    });
+    return;
+  }
+
+  chest.items.splice(idx, 1);
+
+  sendEvent(player.id, {
+    type: "system",
+    ts: nowIso(),
+    message: `You take ${found} from ${chest.name}.`
+  });
+}
+
+function handlePutIntoChest(
+  player: PlayerState,
+  room: Room,
+  target: string,
+  itemName: string
+): void {
+  const chest = findChestInRoom(room.id, target);
+
+  if (!chest) {
+    sendEvent(player.id, {
+      type: "error",
+      ts: nowIso(),
+      message: `No ${target} is present to stash things in.`,
+    });
+    return;
+  }
+
+  if (!chest.isOpen) {
+    sendEvent(player.id, {
+      type: "error",
+      ts: nowIso(),
+      message: `${chest.name} is closed. Open it first.`,
+    });
+    return;
+  }
+
+  if (chest.items.length >= CHEST_CAPACITY) {
+    sendEvent(player.id, {
+      type: "error",
+      ts: nowIso(),
+      message: `${chest.name} can't hold any more.`,
+    });
+    return;
+  }
+
+  const lower = itemName.toLowerCase();
+  let removed = removeItemFromInventory(player.inventory, lower);
+  let unequippedWeapon = false;
+  let unequippedArmor = false;
+
+  if (!removed && player.inventory.weapon && player.inventory.weapon.toLowerCase() === lower) {
+    removed = player.inventory.weapon;
+    player.inventory.weapon = "fist";
+    player.attackRating = FIST_ATTACK_RATING;
+    unequippedWeapon = true;
+  }
+
+  if (!removed && player.inventory.armor && player.inventory.armor.toLowerCase() === lower) {
+    removed = player.inventory.armor;
+    player.inventory.armor = null;
+    unequippedArmor = true;
+  }
+
+  if (!removed) {
+    sendEvent(player.id, {
+      type: "error",
+      ts: nowIso(),
+      message: `You don't have ${itemName} to store.`,
+    });
+    return;
+  }
+
+  chest.items.push(removed);
+
+  const unequipNote = unequippedWeapon
+    ? `You stow ${removed} and feel your attack drop to ${player.attackRating}.`
+    : unequippedArmor
+      ? `You remove ${removed} before placing it inside.`
+      : "";
+
+  sendEvent(player.id, {
+    type: "system",
+    ts: nowIso(),
+    message: [`You place ${removed} into ${chest.name}.`, unequipNote].filter(Boolean).join(" ")
   });
 }
 
@@ -581,6 +884,70 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
       ts: nowIso(),
       message: formatStatusWithInventory(player)
     });
+    return;
+  }
+
+  if (command.type === "open") {
+    const target = command.target.trim();
+    if (!target) {
+      sendEvent(playerId, {
+        type: "error",
+        ts: nowIso(),
+        message: "Open what? Try: open <chest>",
+      });
+      return;
+    }
+
+    await handleOpenChest(player, room, target);
+    return;
+  }
+
+  if (command.type === "close") {
+    const target = command.target.trim();
+    if (!target) {
+      sendEvent(playerId, {
+        type: "error",
+        ts: nowIso(),
+        message: "Close what? Try: close <chest>",
+      });
+      return;
+    }
+
+    handleCloseChest(player, room, target);
+    return;
+  }
+
+  if (command.type === "take") {
+    const target = command.target.trim();
+    const item = command.item.trim();
+
+    if (!target || !item) {
+      sendEvent(playerId, {
+        type: "error",
+        ts: nowIso(),
+        message: "Usage: take <chest> <item>",
+      });
+      return;
+    }
+
+    handleTakeFromChest(player, room, target, item);
+    return;
+  }
+
+  if (command.type === "put") {
+    const target = command.target.trim();
+    const item = command.item.trim();
+
+    if (!target || !item) {
+      sendEvent(playerId, {
+        type: "error",
+        ts: nowIso(),
+        message: "Usage: put <chest> <item>",
+      });
+      return;
+    }
+
+    handlePutIntoChest(player, room, target, item);
     return;
   }
 
@@ -764,7 +1131,8 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
       type: "roomDescription",
       ts: nowIso(),
       room,
-      otherPlayers: withCurrentAges(listOtherActorsInRoom(room.id, playerId))
+      otherPlayers: withCurrentAges(listOtherActorsInRoom(room.id, playerId)),
+      roomObjects: describeRoomObjects(room.id)
     });
     return;
   }
@@ -900,7 +1268,8 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
       type: "roomDescription",
       ts: nowIso(),
       room: targetRoom,
-      otherPlayers: withCurrentAges(listOtherActorsInRoom(targetRoom.id, playerId))
+      otherPlayers: withCurrentAges(listOtherActorsInRoom(targetRoom.id, playerId)),
+      roomObjects: describeRoomObjects(targetRoom.id)
     });
 
     broadcastToRoom(oldRoomId, {
@@ -949,6 +1318,18 @@ function parseClientCommand(raw: string): ClientCommand | null {
     ) {
       return { type: "unequip", slot: parsed.slot };
     }
+    if (parsed.type === "open" && typeof parsed.target === "string") {
+      return { type: "open", target: parsed.target };
+    }
+    if (parsed.type === "close" && typeof parsed.target === "string") {
+      return { type: "close", target: parsed.target };
+    }
+    if (parsed.type === "take" && typeof parsed.target === "string" && typeof parsed.item === "string") {
+      return { type: "take", target: parsed.target, item: parsed.item };
+    }
+    if (parsed.type === "put" && typeof parsed.target === "string" && typeof parsed.item === "string") {
+      return { type: "put", target: parsed.target, item: parsed.item };
+    }
     if (parsed.type === "talk" && typeof parsed.target === "string") {
       const action =
         parsed.action === "list" || parsed.action === "buy" || parsed.action === "leave"
@@ -993,7 +1374,8 @@ wss.on("connection", (socket: WebSocket) => {
     type: "welcome",
     ts: nowIso(),
     player: withCurrentAge(player),
-    room: hubRoom
+    room: hubRoom,
+    roomObjects: describeRoomObjects(hubRoom.id)
   };
   sendEvent(playerId, welcomeEvent);
 
