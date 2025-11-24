@@ -30,10 +30,12 @@ export interface VendorStockItem {
 export interface User {
   id: string;
   name: string;
+  age: number;
   health: number;
   attackRating: number;
   creds: number;
   isNpc: boolean;
+  bornAt: string;
   inventory: Inventory;
   npcClass?: NpcClass;
   vendorStock?: VendorStockItem[];

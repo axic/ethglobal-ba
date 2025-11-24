@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import {
   ClientCommand,
   ServerEvent,
+  User,
   PlayerState,
   Room,
   ExitRef,
@@ -20,6 +21,8 @@ const NORMIE_MIN_HEALTH = 15;
 const NORMIE_MAX_HEALTH = 100;
 const NORMIE_SPAWN_CHANCE = 0.35;
 const MAX_NORMIES_PER_ROOM = 3;
+const GAME_DAYS_PER_YEAR = 7;
+const GAME_DAY_MS = 24 * 60 * 60 * 1000;
 
 interface ConnectionContext {
   socket: WebSocket;
@@ -30,6 +33,7 @@ const rooms = new Map<string, Room>();
 const players = new Map<string, PlayerState>();
 const connections = new Map<string, ConnectionContext>();
 const npcs = new Map<string, PlayerState>();
+const WORLD_START_ISO = nowIso();
 
 const BROKEN_LEDGER: VendorStockItem = {
   name: "Broken Ledger",
@@ -137,13 +141,17 @@ function formatInventory(inventory: Inventory): string {
 }
 
 function formatStatus(player: PlayerState): string {
+  const currentAge = getCurrentAge(player);
+  const gameTime = formatGameTime();
   return [
     `Name: ${player.name}`,
+    `Age: ${currentAge}`,
     `Creds: ${player.creds}`,
     `Health: ${player.health}`,
     `Attack rating: ${player.attackRating}`,
     `Weapon: ${describeWeaponSlot(player.inventory)}`,
-    `Armor: ${describeArmorSlot(player.inventory)}`
+    `Armor: ${describeArmorSlot(player.inventory)}`,
+    `In-game time: ${gameTime}`
   ].join("\n");
 }
 
@@ -191,20 +199,24 @@ function spawnVendorChet(): void {
   const vendorInventory = createEmptyInventory();
   vendorInventory.weapon = BROKEN_LEDGER.name;
 
+  const createdAt = nowIso();
+
   const vendor: PlayerState = {
     id: "npc-vendor-chet",
     name: "Chet",
     description:
       "A vendor hunched over a stack of cracked ledgers, ready to cut you up if you are not nice.",
+    age: 18,
     creds: 0,
     health: 100,
     attackRating: BROKEN_LEDGER.attackRating ?? 20,
     isNpc: true,
     npcClass: "vendor",
     vendorStock: [BROKEN_LEDGER, COFFEE, MONSTER, MATE],
+    bornAt: createdAt,
     inventory: vendorInventory,
     roomId: hubRoom.id,
-    lastActiveAt: nowIso()
+    lastActiveAt: createdAt
   };
 
   npcs.set(vendor.id, vendor);
@@ -214,6 +226,33 @@ spawnVendorChet();
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function gameTimeSince(timestamp: string): { years: number; days: number } {
+  const elapsedMs = Date.now() - new Date(timestamp).getTime();
+  const elapsedDays = Math.max(0, Math.floor(elapsedMs / GAME_DAY_MS));
+  const years = Math.floor(elapsedDays / GAME_DAYS_PER_YEAR);
+  const days = elapsedDays % GAME_DAYS_PER_YEAR;
+
+  return { years, days };
+}
+
+function formatGameTime(): string {
+  const { years, days } = gameTimeSince(WORLD_START_ISO);
+  return `Year ${years + 1}, Day ${days + 1}`;
+}
+
+function getCurrentAge(user: User): number {
+  const { years } = gameTimeSince(user.bornAt);
+  return user.age + years;
+}
+
+function withCurrentAge<T extends User>(user: T): T {
+  return { ...user, age: getCurrentAge(user) };
+}
+
+function withCurrentAges<T extends User>(users: T[]): T[] {
+  return users.map((user) => withCurrentAge(user));
 }
 
 function sendEvent(playerId: string, event: ServerEvent) {
@@ -403,21 +442,25 @@ async function maybeSpawnNormie(room: Room): Promise<void> {
     Math.random() * (NORMIE_MAX_HEALTH - NORMIE_MIN_HEALTH + 1) + NORMIE_MIN_HEALTH
   );
   const creds = Math.floor(Math.random() * 51);
+  const age = Math.floor(Math.random() * 63) + 18;
 
   try {
     const profile = await generateNormieProfile(health);
+    const createdAt = nowIso();
     const npc: PlayerState = {
       id: `npc-${randomUUID()}`,
       name: profile.name,
       description: profile.description,
+      age,
       creds,
       health,
       attackRating: NORMIE_ATTACK_RATING,
       npcClass: "normie",
       isNpc: true,
+      bornAt: createdAt,
       inventory: createEmptyInventory(),
       roomId: room.id,
-      lastActiveAt: nowIso()
+      lastActiveAt: createdAt
     };
 
     npcs.set(npc.id, npc);
@@ -721,7 +764,7 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
       type: "roomDescription",
       ts: nowIso(),
       room,
-      otherPlayers: listOtherActorsInRoom(room.id, playerId)
+      otherPlayers: withCurrentAges(listOtherActorsInRoom(room.id, playerId))
     });
     return;
   }
@@ -857,7 +900,7 @@ async function handleCommand(playerId: string, command: ClientCommand): Promise<
       type: "roomDescription",
       ts: nowIso(),
       room: targetRoom,
-      otherPlayers: listOtherActorsInRoom(targetRoom.id, playerId)
+      otherPlayers: withCurrentAges(listOtherActorsInRoom(targetRoom.id, playerId))
     });
 
     broadcastToRoom(oldRoomId, {
@@ -928,16 +971,19 @@ const wss = new WebSocketServer({ port: PORT });
 
 wss.on("connection", (socket: WebSocket) => {
   const playerId = `p-${randomUUID()}`;
+  const createdAt = nowIso();
   const player: PlayerState = {
     id: playerId,
     name: `Wanderer-${playerId.slice(2, 6)}`,
+    age: 18,
     health: 100,
     attackRating: 10,
     creds: 0,
     isNpc: false,
+    bornAt: createdAt,
     inventory: createEmptyInventory(),
     roomId: hubRoom.id,
-    lastActiveAt: nowIso()
+    lastActiveAt: createdAt
   };
 
   players.set(playerId, player);
@@ -946,7 +992,7 @@ wss.on("connection", (socket: WebSocket) => {
   const welcomeEvent: ServerEvent = {
     type: "welcome",
     ts: nowIso(),
-    player,
+    player: withCurrentAge(player),
     room: hubRoom
   };
   sendEvent(playerId, welcomeEvent);
